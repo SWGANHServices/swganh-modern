@@ -1,0 +1,84 @@
+# Development Dockerfile for SWG:ANH Modern
+FROM ubuntu:22.04
+
+# Avoid interactive prompts during package installation
+ENV DEBIAN_FRONTEND=noninteractive
+
+# Install system dependencies
+RUN apt-get update && apt-get install -y \
+    # Build tools
+    build-essential \
+    cmake \
+    ninja-build \
+    pkg-config \
+    git \
+    # vcpkg dependencies
+    curl \
+    zip \
+    unzip \
+    tar \
+    # C++ development
+    gcc-11 \
+    g++-11 \
+    clang-14 \
+    libc++-dev \
+    libc++abi-dev \
+    # Debugging and analysis tools
+    gdb \
+    valgrind \
+    cppcheck \
+    clang-tidy \
+    # Libraries
+    libboost-all-dev \
+    libssl-dev \
+    libcurl4-openssl-dev \
+    zlib1g-dev \
+    # Lua development
+    lua5.4 \
+    liblua5.4-dev \
+    luajit \
+    libluajit-5.1-dev \
+    # Database clients
+    postgresql-client \
+    libpq-dev \
+    redis-tools \
+    # Utilities
+    wget \
+    vim \
+    nano \
+    htop \
+    tree \
+    jq \
+    # Network tools
+    netcat \
+    telnet \
+    tcpdump \
+    && rm -rf /var/lib/apt/lists/*
+
+# Set C++ compiler to GCC 11
+RUN update-alternatives --install /usr/bin/gcc gcc /usr/bin/gcc-11 100 \
+    && update-alternatives --install /usr/bin/g++ g++ /usr/bin/g++-11 100
+
+# Create workspace directory
+WORKDIR /workspace
+
+# Create non-root user for development
+RUN useradd -m -s /bin/bash developer \
+    && usermod -aG sudo developer \
+    && echo "developer ALL=(ALL) NOPASSWD:ALL" >> /etc/sudoers
+
+# Switch to developer user
+USER developer
+
+# Set up development environment
+RUN echo 'export PS1="\u@swganh-dev:\w$ "' >> ~/.bashrc \
+    && echo 'alias ll="ls -la"' >> ~/.bashrc \
+    && echo 'alias la="ls -A"' >> ~/.bashrc \
+    && echo 'alias build="cd build && make -j$(nproc)"' >> ~/.bashrc \
+    && echo 'alias rebuild="rm -rf build && mkdir build && cd build && cmake .. && make -j$(nproc)"' >> ~/.bashrc
+
+# Expose common development ports
+EXPOSE 44453 44463 8080 9090
+
+# Default command
+CMD ["bash"]

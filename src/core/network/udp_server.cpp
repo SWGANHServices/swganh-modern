@@ -1,282 +1,202 @@
-// Implementation file: src/core/network/udp_server.cpp
-#include "udp_server.hpp"
-#include <iostream>
-#include <cstring>
-#include <chrono>
+// src/network/udp_server.hpp
+#pragma once
+
+#include "core/types.hpp"
+#include "core/logger.hpp"
+#include <boost/asio.hpp>
+#include <boost/bind/bind.hpp>
+#include <functional>
+#include <memory>
 #include <thread>
 
 namespace swganh::network {
 
-std::atomic<bool> UDPServer::networking_initialized_{false};
+using boost::asio::ip::udp;
 
-UDPServer::UDPServer() {
-    InitializeNetworking();
+class UdpServer {
+public:
+    using PacketHandler = std::function<void(const core::byte_vector&, const udp::endpoint&)>;
+    
+    explicit UdpServer(core::u16 port);
+    ~UdpServer();
+    
+    // Start/stop the server
+    void start();
+    void stop();
+    bool is_running() const { return running_; }
+    
+    // Set packet handler
+    void set_packet_handler(PacketHandler handler);
+    
+    // Send packet to endpoint
+    void send_packet(const core::byte_vector& data, const udp::endpoint& endpoint);
+    
+    // Get server info
+    core::u16 port() const { return port_; }
+    
+private:
+    void start_receive();
+    void handle_receive(const boost::system::error_code& error, std::size_t bytes_transferred);
+    void handle_send(const boost::system::error_code& error, std::size_t bytes_transferred);
+    void io_thread();
+    
+    core::u16 port_;
+    bool running_{false};
+    
+    boost::asio::io_context io_context_;
+    std::unique_ptr<udp::socket> socket_;
+    std::unique_ptr<std::thread> io_thread_;
+    
+    udp::endpoint remote_endpoint_;
+    std::array<core::u8, 1024> receive_buffer_;
+    
+    PacketHandler packet_handler_;
+};
+
+} // namespace swganh::network
+
+// src/network/udp_server.cpp
+#include "udp_server.hpp"
+#include <iostream>
+
+namespace swganh::network {
+
+UdpServer::UdpServer(core::u16 port) : port_(port) {
+    LOG_INFO("Creating UDP server on port ", port);
 }
 
-UDPServer::~UDPServer() {
-    Stop();
-    CleanupNetworking();
+UdpServer::~UdpServer() {
+    stop();
 }
 
-bool UDPServer::Start(const std::string& bind_address, uint16_t port) {
+void UdpServer::start() {
     if (running_) {
-        std::cout << "[UDP] Server already running" << std::endl;
-        return false;
-    }
-    
-    bind_address_ = bind_address;
-    port_ = port;
-    
-    if (!InitializeSocket()) {
-        std::cout << "[UDP] Failed to initialize socket" << std::endl;
-        return false;
-    }
-    
-    running_ = true;
-    network_thread_ = std::thread(&UDPServer::NetworkThreadMain, this);
-    
-    std::cout << "[UDP] Server started on " << bind_address_ << ":" << port_ << std::endl;
-    return true;
-}
-
-void UDPServer::Stop() {
-    if (!running_) return;
-    
-    std::cout << "[UDP] Stopping server..." << std::endl;
-    running_ = false;
-    
-    if (network_thread_.joinable()) {
-        network_thread_.join();
-    }
-    
-    CleanupSocket();
-    std::cout << "[UDP] Server stopped" << std::endl;
-}
-
-void UDPServer::SetSOEHandler(std::unique_ptr<SOEProtocolHandler> handler) {
-    soe_handler_ = std::move(handler);
-}
-
-bool UDPServer::SendPacket(const std::vector<uint8_t>& data, 
-                          const std::string& address, 
-                          uint16_t port) {
-    if (socket_ == INVALID_SOCKET_VALUE) {
-        return false;
-    }
-    
-    struct sockaddr_in dest_addr{};
-    dest_addr.sin_family = AF_INET;
-    dest_addr.sin_port = htons(port);
-    
-#ifdef _WIN32
-    dest_addr.sin_addr.s_addr = inet_addr(address.c_str());
-#else
-    inet_pton(AF_INET, address.c_str(), &dest_addr.sin_addr);
-#endif
-    
-    ssize_t sent = sendto(socket_, 
-                         reinterpret_cast<const char*>(data.data()), 
-                         data.size(), 
-                         0,
-                         reinterpret_cast<const struct sockaddr*>(&dest_addr), 
-                         sizeof(dest_addr));
-    
-    if (sent == -1) {
-        std::cout << "[UDP] Send failed: " << GetLastSocketError() << std::endl;
-        return false;
-    }
-    
-    packets_sent_++;
-    bytes_sent_ += sent;
-    return true;
-}
-
-bool UDPServer::SendPacketToSession(uint32_t session_id, const std::vector<uint8_t>& data) {
-    if (!soe_handler_) return false;
-    
-    auto* session = soe_handler_->GetSession(session_id);
-    if (!session) return false;
-    
-    return SendPacket(data, session->remote_address, session->remote_port);
-}
-
-void UDPServer::NetworkThreadMain() {
-    std::cout << "[UDP] Network thread started" << std::endl;
-    
-    while (running_) {
-        ProcessIncomingData();
-        
-        // Update SOE handler for cleanup and maintenance
-        if (soe_handler_) {
-            auto* basic_handler = dynamic_cast<BasicSOEHandler*>(soe_handler_.get());
-            if (basic_handler) {
-                basic_handler->Update();
-            }
-        }
-        
-        // Small sleep to prevent busy waiting
-        std::this_thread::sleep_for(std::chrono::milliseconds(1));
-    }
-    
-    std::cout << "[UDP] Network thread stopped" << std::endl;
-}
-
-void UDPServer::ProcessIncomingData() {
-    if (socket_ == INVALID_SOCKET_VALUE) return;
-    
-    std::vector<uint8_t> buffer(max_packet_size_);
-    struct sockaddr_in client_addr{};
-    socklen_t addr_len = sizeof(client_addr);
-    
-    ssize_t received = recvfrom(socket_,
-                               reinterpret_cast<char*>(buffer.data()),
-                               buffer.size(),
-                               0,
-                               reinterpret_cast<struct sockaddr*>(&client_addr),
-                               &addr_len);
-    
-    if (received > 0) {
-        buffer.resize(received);
-        packets_received_++;
-        bytes_received_ += received;
-        
-        // Convert client address to string
-        char addr_str[INET_ADDRSTRLEN];
-        inet_ntop(AF_INET, &client_addr.sin_addr, addr_str, INET_ADDRSTRLEN);
-        uint16_t client_port = ntohs(client_addr.sin_port);
-        
-        HandleClientPacket(buffer, std::string(addr_str), client_port);
-    } else if (received == -1) {
-#ifdef _WIN32
-        int error = WSAGetLastError();
-        if (error != WSAEWOULDBLOCK) {
-            std::cout << "[UDP] Receive error: " << error << std::endl;
-        }
-#else
-        if (errno != EAGAIN && errno != EWOULDBLOCK) {
-            std::cout << "[UDP] Receive error: " << strerror(errno) << std::endl;
-        }
-#endif
-    }
-}
-
-void UDPServer::HandleClientPacket(const std::vector<uint8_t>& data,
-                                  const std::string& client_addr,
-                                  uint16_t client_port) {
-    if (!soe_handler_) {
-        std::cout << "[UDP] No SOE handler configured" << std::endl;
+        LOG_WARNING("UDP server already running");
         return;
     }
     
-    // Process packet through SOE protocol handler
-    bool handled = soe_handler_->ProcessIncomingPacket(data, client_addr, client_port);
-    
-    if (!handled) {
-        std::cout << "[UDP] Failed to handle packet from " 
-                  << client_addr << ":" << client_port << std::endl;
+    try {
+        socket_ = std::make_unique<udp::socket>(io_context_, udp::endpoint(udp::v4(), port_));
+        
+        LOG_INFO("UDP server started on port ", port_);
+        running_ = true;
+        
+        start_receive();
+        
+        // Start IO thread
+        io_thread_ = std::make_unique<std::thread>([this]() { io_thread(); });
+        
+    } catch (const std::exception& e) {
+        LOG_ERROR("Failed to start UDP server: ", e.what());
+        running_ = false;
     }
 }
 
-bool UDPServer::InitializeSocket() {
-    socket_ = socket(AF_INET, SOCK_DGRAM, IPPROTO_UDP);
-    if (socket_ == INVALID_SOCKET_VALUE) {
-        std::cout << "[UDP] Failed to create socket: " << GetLastSocketError() << std::endl;
-        return false;
+void UdpServer::stop() {
+    if (!running_) {
+        return;
     }
     
-    // Set socket to non-blocking mode
-#ifdef _WIN32
-    u_long mode = 1;
-    if (ioctlsocket(socket_, FIONBIO, &mode) != 0) {
-        std::cout << "[UDP] Failed to set non-blocking mode: " << GetLastSocketError() << std::endl;
-        CleanupSocket();
-        return false;
-    }
-#else
-    int flags = fcntl(socket_, F_GETFL, 0);
-    if (flags == -1 || fcntl(socket_, F_SETFL, flags | O_NONBLOCK) == -1) {
-        std::cout << "[UDP] Failed to set non-blocking mode: " << strerror(errno) << std::endl;
-        CleanupSocket();
-        return false;
-    }
-#endif
+    LOG_INFO("Stopping UDP server");
+    running_ = false;
     
-    // Enable address reuse
-    int reuse = 1;
-    if (setsockopt(socket_, SOL_SOCKET, SO_REUSEADDR, 
-                   reinterpret_cast<const char*>(&reuse), sizeof(reuse)) != 0) {
-        std::cout << "[UDP] Failed to set SO_REUSEADDR: " << GetLastSocketError() << std::endl;
+    io_context_.stop();
+    
+    if (io_thread_ && io_thread_->joinable()) {
+        io_thread_->join();
     }
     
-    // Bind socket
-    struct sockaddr_in bind_addr{};
-    bind_addr.sin_family = AF_INET;
-    bind_addr.sin_port = htons(port_);
+    if (socket_) {
+        socket_->close();
+        socket_.reset();
+    }
     
-    if (bind_address_ == "0.0.0.0") {
-        bind_addr.sin_addr.s_addr = INADDR_ANY;
+    LOG_INFO("UDP server stopped");
+}
+
+void UdpServer::set_packet_handler(PacketHandler handler) {
+    packet_handler_ = std::move(handler);
+}
+
+void UdpServer::send_packet(const core::byte_vector& data, const udp::endpoint& endpoint) {
+    if (!socket_ || !running_) {
+        LOG_ERROR("Cannot send packet: server not running");
+        return;
+    }
+    
+    socket_->async_send_to(
+        boost::asio::buffer(data),
+        endpoint,
+        boost::bind(&UdpServer::handle_send, this,
+                   boost::asio::placeholders::error,
+                   boost::asio::placeholders::bytes_transferred)
+    );
+}
+
+void UdpServer::start_receive() {
+    if (!socket_ || !running_) {
+        return;
+    }
+    
+    socket_->async_receive_from(
+        boost::asio::buffer(receive_buffer_),
+        remote_endpoint_,
+        boost::bind(&UdpServer::handle_receive, this,
+                   boost::asio::placeholders::error,
+                   boost::asio::placeholders::bytes_transferred)
+    );
+}
+
+void UdpServer::handle_receive(const boost::system::error_code& error, std::size_t bytes_transferred) {
+    if (!error && bytes_transferred > 0) {
+        // Create packet data
+        core::byte_vector packet_data(receive_buffer_.begin(), 
+                                     receive_buffer_.begin() + bytes_transferred);
+        
+        LOG_DEBUG("Received ", bytes_transferred, " bytes from ", 
+                 remote_endpoint_.address().to_string(), ":", remote_endpoint_.port());
+        
+        // Call packet handler if set
+        if (packet_handler_) {
+            packet_handler_(packet_data, remote_endpoint_);
+        }
+        
+        // Continue receiving
+        start_receive();
+        
+    } else if (error != boost::asio::error::operation_aborted) {
+        LOG_ERROR("UDP receive error: ", error.message());
+        if (running_) {
+            start_receive();
+        }
+    }
+}
+
+void UdpServer::handle_send(const boost::system::error_code& error, std::size_t bytes_transferred) {
+    if (error) {
+        LOG_ERROR("UDP send error: ", error.message());
     } else {
-#ifdef _WIN32
-        bind_addr.sin_addr.s_addr = inet_addr(bind_address_.c_str());
-#else
-        inet_pton(AF_INET, bind_address_.c_str(), &bind_addr.sin_addr);
-#endif
-    }
-    
-    if (bind(socket_, reinterpret_cast<const struct sockaddr*>(&bind_addr), 
-             sizeof(bind_addr)) != 0) {
-        std::cout << "[UDP] Failed to bind socket: " << GetLastSocketError() << std::endl;
-        CleanupSocket();
-        return false;
-    }
-    
-    return true;
-}
-
-void UDPServer::CleanupSocket() {
-    if (socket_ != INVALID_SOCKET_VALUE) {
-#ifdef _WIN32
-        closesocket(socket_);
-#else
-        close(socket_);
-#endif
-        socket_ = INVALID_SOCKET_VALUE;
+        LOG_DEBUG("Sent ", bytes_transferred, " bytes");
     }
 }
 
-std::string UDPServer::GetLastSocketError() {
-#ifdef _WIN32
-    int error = WSAGetLastError();
-    return "Error " + std::to_string(error);
-#else
-    return strerror(errno);
-#endif
-}
-
-bool UDPServer::InitializeNetworking() {
-    if (networking_initialized_.exchange(true)) {
-        return true; // Already initialized
+void UdpServer::io_thread() {
+    LOG_DEBUG("UDP server IO thread started");
+    
+    while (running_) {
+        try {
+            io_context_.run();
+            break;
+        } catch (const std::exception& e) {
+            LOG_ERROR("Exception in UDP server IO thread: ", e.what());
+            if (!running_) break;
+            
+            // Reset context for retry
+            io_context_.reset();
+        }
     }
     
-#ifdef _WIN32
-    WSADATA wsaData;
-    int result = WSAStartup(MAKEWORD(2, 2), &wsaData);
-    if (result != 0) {
-        std::cout << "[UDP] WSAStartup failed: " << result << std::endl;
-        networking_initialized_ = false;
-        return false;
-    }
-#endif
-    
-    return true;
-}
-
-void UDPServer::CleanupNetworking() {
-    if (networking_initialized_.exchange(false)) {
-#ifdef _WIN32
-        WSACleanup();
-#endif
-    }
+    LOG_DEBUG("UDP server IO thread stopped");
 }
 
 } // namespace swganh::network

@@ -1,39 +1,106 @@
-version: '3.8'
-
 services:
   swganh-dev:
     build:
       context: ../../
       dockerfile: docker/dev/Dockerfile.dev
+    container_name: swganh-dev
+    hostname: swganh-dev
     volumes:
       - ../../:/workspace
-      - build-cache:/workspace/build
+      - dev_build_cache:/workspace/build
+      - dev_vcpkg_cache:/home/developer/.vcpkg
     ports:
-      - "44453:44453"  # Login server
-      - "44463:44463"  # Zone server
+      - "44453:44453"
+      - "44463:44463"
+      - "8080:8080"
+      - "9090:9090"
+    environment:
+      - DEBUG_MODE=1
+      - LOG_LEVEL=DEBUG
+      - PLUGIN_AUTO_RELOAD=1
+      - HOT_RELOAD_SCRIPTS=1
+      - ENABLE_PROFILING=1
+      - DATABASE_URL=postgresql://swganh:devpassword@postgres:5432/swganh_dev
+      - REDIS_URL=redis://redis:6379
     depends_on:
       - postgres
       - redis
-    environment:
-      - BUILD_TYPE=Debug
-  
+    stdin_open: true
+    tty: true
+    networks:
+      - swganh-dev-network
+
   postgres:
-    image: postgres:14
+    image: postgres:14-alpine
+    container_name: swganh-postgres
+    hostname: postgres
     environment:
-      POSTGRES_DB: swganh
+      POSTGRES_DB: swganh_dev
       POSTGRES_USER: swganh
-      POSTGRES_PASSWORD: password
+      POSTGRES_PASSWORD: devpassword
+      POSTGRES_INITDB_ARGS: "--encoding=UTF8 --locale=C"
+    volumes:
+      - postgres_data:/var/lib/postgresql/data
+      - ../../data/sql:/docker-entrypoint-initdb.d:ro
     ports:
       - "5432:5432"
-    volumes:
-      - postgres-data:/var/lib/postgresql/data
-      - ../../data/sql:/docker-entrypoint-initdb.d
-  
+    networks:
+      - swganh-dev-network
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U swganh -d swganh_dev"]
+      interval: 10s
+      timeout: 5s
+      retries: 5
+
   redis:
     image: redis:7-alpine
+    container_name: swganh-redis
+    hostname: redis
+    command: redis-server --appendonly yes --maxmemory 256mb --maxmemory-policy allkeys-lru
+    volumes:
+      - redis_data:/data
     ports:
       - "6379:6379"
+    networks:
+      - swganh-dev-network
+    healthcheck:
+      test: ["CMD", "redis-cli", "ping"]
+      interval: 10s
+      timeout: 5s
+      retries: 5
+
+  pgadmin:
+    image: dpage/pgadmin4:latest
+    container_name: swganh-pgadmin
+    hostname: pgadmin
+    environment:
+      PGADMIN_DEFAULT_EMAIL: admin@swganh.dev
+      PGADMIN_DEFAULT_PASSWORD: admin
+      PGADMIN_CONFIG_SERVER_MODE: 'False'
+    volumes:
+      - pgadmin_data:/var/lib/pgadmin
+    ports:
+      - "5050:80"
+    depends_on:
+      - postgres
+    networks:
+      - swganh-dev-network
 
 volumes:
-  postgres-data:
-  build-cache:
+  postgres_data:
+    driver: local
+  redis_data:
+    driver: local
+  pgadmin_data:
+    driver: local
+  dev_build_cache:
+    driver: local
+  dev_vcpkg_cache:
+    driver: local
+
+networks:
+  swganh-dev-network:
+    driver: bridge
+    ipam:
+      config:
+        - subnet: 172.20.0.0/16

@@ -1,0 +1,78 @@
+{
+  "server": {
+    "name": "SWG:ANH Modern Development Server",
+    "version": "0.1.0",
+    "galaxy_name": "Ahazi",
+    "max_players": 100,
+    "tick_rate": 30,
+    "debug_mode": true
+  },
+  "network": {
+    "login_server": {
+      "host": "0.0.0.0",
+      "port": 44453,
+      "max_connections": 1000
+    },
+    "zone_server": {
+      "host": "0.0.0.0", 
+      "port": 44463,
+      "max_connections": 500
+    },
+    "admin_server": {
+      "host": "0.0.0.0",
+      "port": 8080,
+      "enabled": true
+    }
+  },
+  "database": {
+    "host": "postgres",
+    "port": 5432,
+    "name": "swganh_dev",
+    "username": "swganh",
+    "password": "devpassword",
+    "pool_size": 10,
+    "connection_timeout": 30
+  },
+  "redis": {
+    "host": "redis",
+    "port": 6379,
+    "database": 0,
+    "password": "",
+    "pool_size": 10
+  },
+  "logging": {
+    "level": "DEBUG",
+    "console": true,
+    "file": "logs/server.log",
+    "max_file_size": "100MB",
+    "max_files": 5
+  },
+  "features": {
+    "jedi_enabled": false,
+    "vehicles_enabled": true,
+    "space_enabled": false,
+    "player_cities_enabled": true,
+    "guild_wars_enabled": false
+  },
+  "plugins": {
+    "auto_load": true,
+    "hot_reload": true,
+    "search_paths": [
+      "plugins/",
+      "scripts/plugins/"
+    ],
+    "enabled": [
+      "core-systems",
+      "character-creation",
+      "basic-combat",
+      "admin-commands"
+    ]
+  },
+  "security": {
+    "session_timeout": 3600,
+    "max_login_attempts": 5,
+    "login_attempt_window": 300,
+    "require_email_verification": false,
+    "encryption_key": "dev-key-32-characters-long!!!!"
+  }
+}
