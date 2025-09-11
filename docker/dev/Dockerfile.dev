@@ -66,6 +66,14 @@ WORKDIR /workspace
 RUN useradd -m -s /bin/bash developer \
     && usermod -aG sudo developer \
     && echo "developer ALL=(ALL) NOPASSWD:ALL" >> /etc/sudoers
+	
+# Add this before switching to developer user
+ARG USER_ID=1000
+ARG GROUP_ID=1000
+
+# Modify the user creation section
+RUN groupmod -g ${GROUP_ID} developer || groupadd -g ${GROUP_ID} developer
+RUN usermod -u ${USER_ID} -g ${GROUP_ID} developer
 
 # Switch to developer user
 USER developer
