@@ -17,9 +17,11 @@ void UdpServer::start() {
     }
     
     try {
-        socket_ = std::make_unique<udp::socket>(io_context_, udp::endpoint(udp::v4(), port_));
+        socket_ = std::make_unique<udp::socket>(io_context_, 
+            udp::endpoint(boost::asio::ip::address::from_string("0.0.0.0"), port_));
         
         LOG_INFO("UDP server started on port ", port_);
+        LOG_DEBUG("start_receive() called, socket valid: yes, running: 1");
         running_ = true;
         
         start_receive();
@@ -88,6 +90,8 @@ void UdpServer::start_receive() {
 }
 
 void UdpServer::handle_receive(const boost::system::error_code& error, std::size_t bytes_transferred) {
+    LOG_DEBUG("handle_receive called, error: ", error.message(), ", bytes: ", bytes_transferred);
+    
     if (!error && bytes_transferred > 0) {
         core::byte_vector packet_data(receive_buffer_.begin(), 
                                      receive_buffer_.begin() + bytes_transferred);
@@ -119,6 +123,7 @@ void UdpServer::handle_send(const boost::system::error_code& error, std::size_t 
 
 void UdpServer::io_thread() {
     LOG_DEBUG("UDP server IO thread started");
+    LOG_DEBUG("IO context running...");
     
     while (running_) {
         try {

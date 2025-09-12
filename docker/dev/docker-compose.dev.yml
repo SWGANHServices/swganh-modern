@@ -10,8 +10,8 @@ services:
       - dev_build_cache:/workspace/build
       - dev_vcpkg_cache:/home/developer/.vcpkg
     ports:
-      - "44453:44453"
-      - "44463:44463"
+      - "44453:44453/udp"
+      - "44463:44463/udp"
       - "8080:8080"
       - "9090:9090"
     environment:
