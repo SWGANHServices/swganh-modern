@@ -1,55 +1,54 @@
+# File: CMakeLists.txt
 cmake_minimum_required(VERSION 3.16)
-project(swganh-modern VERSION 1.0.0 LANGUAGES CXX)
+project(swganh-simple VERSION 1.0.0)
+
+# C++ standard
 set(CMAKE_CXX_STANDARD 20)
 set(CMAKE_CXX_STANDARD_REQUIRED ON)
-set(CMAKE_CXX_EXTENSIONS OFF)
-if(NOT CMAKE_BUILD_TYPE)
-    set(CMAKE_BUILD_TYPE Debug)
-endif()
-# Compiler flags
-set(CMAKE_CXX_FLAGS_DEBUG "-g -O0 -Wall -Wextra")
-set(CMAKE_CXX_FLAGS_RELEASE "-O3 -DNDEBUG")
 
-# Find required packages
-find_package(Boost REQUIRED COMPONENTS system filesystem thread)
+# Find packages
+find_package(Boost REQUIRED COMPONENTS system)
+find_package(Threads REQUIRED)
 
-# Include directories
-include_directories(src)
-
-# Core library sources
-set(CORE_SOURCES
+# Core library with config and account management
+add_library(swganh_core STATIC
     src/core/logger.cpp
+    src/core/account_manager.cpp
 )
+target_link_libraries(swganh_core Threads::Threads)
 
-# Network library sources  
-set(NETWORK_SOURCES
+# Network library
+add_library(swganh_network STATIC
     src/network/udp_server.cpp
 )
-
-# Create libraries
-add_library(swganh_core STATIC ${CORE_SOURCES})
-add_library(swganh_network STATIC ${NETWORK_SOURCES})
-
-# Link libraries
 target_link_libraries(swganh_network 
-    swganh_core 
-    ${Boost_LIBRARIES} 
-    pthread
+    swganh_core
+    Boost::system 
+    Threads::Threads
+)
+
+# Login server library
+add_library(swganh_login STATIC
+    src/servers/login/swg_protocol.cpp
+)
+target_link_libraries(swganh_login
+    swganh_core
+    swganh_network
 )
 
 # Login server executable
-add_executable(login_server
+add_executable(login_server 
     src/servers/login/main.cpp
 )
-
-target_link_libraries(login_server
-    swganh_core
+target_link_libraries(login_server 
+    swganh_login
     swganh_network
-    ${Boost_LIBRARIES}
-    pthread
+    swganh_core
+    Boost::system
+    Threads::Threads
 )
 
-# Set output directory
-set(CMAKE_RUNTIME_OUTPUT_DIRECTORY ${CMAKE_BINARY_DIR}/bin)
-
-message(STATUS "Build configuration complete")
+# Output directory
+set_target_properties(login_server PROPERTIES
+    RUNTIME_OUTPUT_DIRECTORY ${CMAKE_BINARY_DIR}
+)

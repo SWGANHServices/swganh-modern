@@ -1,50 +1,51 @@
+// File: src/network/udp_server.hpp
 #pragma once
 
-#include "core/types.hpp"
-#include "core/logger.hpp"
 #include <boost/asio.hpp>
 #include <functional>
-#include <memory>
+#include <vector>
 #include <thread>
-#include <array>
+#include <memory>
+#include "../core/types.hpp"
 
-namespace swganh::network {
+namespace swganh {
 
 using boost::asio::ip::udp;
 
+// Packet handler type that can send responses
+using PacketHandler = std::function<void(const std::vector<u8>&, const udp::endpoint&, 
+                                       std::function<void(const std::vector<u8>&, const udp::endpoint&)>)>;
+
 class UdpServer {
 public:
-    using PacketHandler = std::function<void(const core::byte_vector&, const udp::endpoint&)>;
-    
-    explicit UdpServer(core::u16 port);
+    explicit UdpServer(u16 port);
     ~UdpServer();
     
+    void set_packet_handler(PacketHandler handler);
     void start();
     void stop();
+    
+    // Send packet to specific endpoint
+    void send_packet(const std::vector<u8>& data, const udp::endpoint& target);
+    
     bool is_running() const { return running_; }
-    
-    void set_packet_handler(PacketHandler handler);
-    void send_packet(const core::byte_vector& data, const udp::endpoint& endpoint);
-    
-    core::u16 port() const { return port_; }
-    
+
 private:
     void start_receive();
     void handle_receive(const boost::system::error_code& error, std::size_t bytes_transferred);
-    void handle_send(const boost::system::error_code& error, std::size_t bytes_transferred);
-    void io_thread();
     
-    core::u16 port_;
-    bool running_{false};
+    u16 port_;
+    bool running_;
     
     boost::asio::io_context io_context_;
+    boost::asio::executor_work_guard<boost::asio::io_context::executor_type> work_guard_;
     std::unique_ptr<udp::socket> socket_;
-    std::unique_ptr<std::thread> io_thread_;
+    std::thread io_thread_;
     
-    udp::endpoint remote_endpoint_;
-    std::array<core::u8, 1024> receive_buffer_;
+    std::array<u8, 1024> receive_buffer_;
+    udp::endpoint sender_endpoint_;
     
     PacketHandler packet_handler_;
 };
 
-}
+} // namespace swganh
